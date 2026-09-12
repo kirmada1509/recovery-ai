@@ -34,7 +34,7 @@ function ProfileForm() {
   useEffect(() => {
     (async () => {
       try {
-        const result = await authFetch<{ profile: Profile | null }>('profile');
+        const result = await authFetch<{ profile: Profile | null }>('identity', 'profile');
         if (result.profile) setProfile({ ...emptyProfile, ...result.profile });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load profile');
@@ -50,7 +50,7 @@ function ProfileForm() {
     setSaved(false);
     setSaving(true);
     try {
-      await authFetch('profile', { method: 'PUT', body: JSON.stringify(profile) });
+      await authFetch('identity', 'profile', { method: 'PUT', body: JSON.stringify(profile) });
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save profile');

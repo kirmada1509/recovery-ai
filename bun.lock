@@ -106,6 +106,17 @@
         "typescript": "^5.7.2",
       },
     },
+    "packages/rate-limit-ts": {
+      "name": "@recoveryai/rate-limit-ts",
+      "version": "0.0.0",
+      "dependencies": {
+        "@recoveryai/observability-ts": "workspace:*",
+      },
+      "devDependencies": {
+        "@recoveryai/ts-config": "workspace:*",
+        "typescript": "^5.7.2",
+      },
+    },
     "packages/service-runtime": {
       "name": "@recoveryai/service-runtime",
       "version": "0.0.0",
@@ -130,6 +141,7 @@
       "dependencies": {
         "@recoveryai/config-ts": "workspace:*",
         "@recoveryai/observability-ts": "workspace:*",
+        "@recoveryai/rate-limit-ts": "workspace:*",
         "@recoveryai/service-runtime": "workspace:*",
         "drizzle-orm": "^0.45.2",
         "elysia": "^1.4.0",
@@ -147,12 +159,17 @@
       "version": "0.0.0",
       "dependencies": {
         "@recoveryai/config-ts": "workspace:*",
+        "@recoveryai/internal-auth-ts": "workspace:*",
         "@recoveryai/observability-ts": "workspace:*",
         "@recoveryai/service-runtime": "workspace:*",
+        "drizzle-orm": "^0.45.2",
         "elysia": "^1.4.0",
+        "jose": "^6.2.12",
+        "zod": "^3.24.1",
       },
       "devDependencies": {
         "@recoveryai/ts-config": "workspace:*",
+        "drizzle-kit": "^0.31.10",
         "typescript": "^5.7.2",
       },
     },
@@ -162,11 +179,16 @@
       "dependencies": {
         "@recoveryai/config-ts": "workspace:*",
         "@recoveryai/observability-ts": "workspace:*",
+        "@recoveryai/rate-limit-ts": "workspace:*",
         "@recoveryai/service-runtime": "workspace:*",
+        "drizzle-orm": "^0.45.2",
         "elysia": "^1.4.0",
+        "jose": "^6.2.12",
+        "zod": "^3.24.1",
       },
       "devDependencies": {
         "@recoveryai/ts-config": "workspace:*",
+        "drizzle-kit": "^0.31.10",
         "typescript": "^5.7.2",
       },
     },
@@ -464,6 +486,8 @@
     "@recoveryai/observability-ts": ["@recoveryai/observability-ts@workspace:packages/observability-ts"],
 
     "@recoveryai/platform-web": ["@recoveryai/platform-web@workspace:apps/platform-web"],
+
+    "@recoveryai/rate-limit-ts": ["@recoveryai/rate-limit-ts@workspace:packages/rate-limit-ts"],
 
     "@recoveryai/recovery-inbox-service": ["@recoveryai/recovery-inbox-service@workspace:services/recovery-inbox-service"],
 

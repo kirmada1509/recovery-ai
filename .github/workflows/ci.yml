@@ -48,7 +48,7 @@ jobs:
         run: |
           set -e
           for dir in packages/config-ts packages/observability-ts packages/service-runtime \
-                     packages/internal-auth-ts \
+                     packages/internal-auth-ts packages/rate-limit-ts \
                      services/auth-service services/identity-service services/claims-service \
                      services/evidence-service services/recovery-inbox-service \
                      services/filing-gateway services/insurer-sandbox-service \
@@ -63,11 +63,33 @@ jobs:
           PGPASSWORD: recoveryai
         run: |
           set -e
-          for db in recoveryai_auth recoveryai_identity; do
+          for db in recoveryai_auth recoveryai_identity recoveryai_evidence recoveryai_claims; do
             psql -h localhost -U recoveryai -d postgres -c "CREATE DATABASE $db"
           done
       - name: Apply migrations
         run: ./scripts/migrate.sh
+      - name: Start MinIO
+        # evidence-service's tests exercise real presigned uploads/downloads,
+        # not a mock storage backend — same rationale as the Postgres service
+        # above. Run via `docker run` rather than the job's `services:` block
+        # because MinIO's image needs explicit command args (`server /data`),
+        # which `services:` has no way to pass.
+        run: |
+          set -e
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=recoveryai -e MINIO_ROOT_PASSWORD=recoveryai-dev-secret \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
+      - name: Create evidence bucket
+        run: |
+          docker run --rm --network host quay.io/minio/mc:latest sh -c "
+            mc alias set local http://localhost:9000 recoveryai recoveryai-dev-secret &&
+            mc mb -p local/recoveryai-evidence &&
+            mc anonymous set none local/recoveryai-evidence
+          "
       - name: Unit tests
         run: bun test --path-ignore-patterns '**/e2e/**'
       - name: Build applications

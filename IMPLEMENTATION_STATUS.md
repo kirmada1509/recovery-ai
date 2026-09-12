@@ -7,7 +7,7 @@ Section 18. Updated as each phase gate passes.
 |---|---|---|
 | **0** | Repository foundation and architecture guardrails | ✅ **Complete** |
 | **1** | Authentication and identity/KYC | ✅ **Complete** |
-| 2 | Evidence and policy upload | ⬜ Not started |
+| **2** | Evidence and policy upload | ✅ **Complete** |
 | 3 | Claims lifecycle | ⬜ Not started |
 | 4 | Verification service | ⬜ Not started |
 | 5 | Policy RAG and AI agent core | ⬜ Not started |
@@ -140,3 +140,61 @@ specifically to keep this fixed.
 Admin-facing UI, KYC document upload, and a real (non-mock) KYC provider adapter are
 out of scope for Phase 1 per the plan; `POST /v1/kyc/provider/webhook` exists as the
 provider-abstraction boundary those would plug into.
+
+## Phase 2 — complete
+
+| Task | Delivered |
+|---|---|
+| **P2-T1** MinIO integration | `evidence-service` talks to MinIO through Bun's native `Bun.S3Client` (`src/lib/object-storage.ts`) — presigned PUT/GET, `stat`, `delete`, `write` — against the already-private `recoveryai-evidence` bucket |
+| **P2-T2** Evidence metadata API | `documents`/`document_metadata` schema; `GET /v1/documents/:id`, `GET /v1/documents/:id/download-url`, `DELETE /v1/documents/:id`, all ownership-checked (`ownerUserId === caller.sub`, or `role === 'admin'`) |
+| **P2-T3** Upload validation | MIME allowlist + max size enforced both at `initiate-upload` (declared) and `complete-upload` (re-checked against what MinIO actually received via `stat()`); storage keys are always a fresh `crypto.randomUUID()`, never the original filename; SHA-256 recorded |
+| **P2-T4** Policy creation | `policies` in claims-service; `POST /v1/policies` calls evidence-service's own `GET /v1/documents/:id` with the caller's own token (no cross-service DB read) and rejects a document that isn't owned by the caller or isn't `ready` |
+| **P2-T5** Frontend upload component | `apps/platform-web/src/components/upload-field.tsx` (progress/error/retry) on a new `/policy` page, driving `evidence-service`'s server-proxied `/v1/documents/upload` |
+
+Both the presigned two-step flow (`initiate-upload` → client PUT → `complete-upload`) and
+a single-call server-proxied `POST /v1/documents/upload` exist. The frontend uses the
+proxied endpoint — a presigned PUT straight from the browser to MinIO would need MinIO
+configured for cross-origin requests, which it isn't; the same-origin proxy hop is one
+fewer moving part for files this size. The presigned flow is still real, tested, and
+available (e.g. for a future admin tool or SDK integration).
+
+### Acceptance evidence
+
+- `./scripts/test-all.sh` passes: 103 Bun tests (up from 90), including evidence-service's
+  full upload→read→download→delete lifecycle against real MinIO (the download URL is
+  fetched and its bytes checked, not just its status code), rejection of a disallowed
+  MIME type and an oversized file, and IDOR tests for read/download-url/delete plus an
+  admin-bypass test; claims-service's policy creation validated against a stubbed
+  evidence-service response (owned+ready / not-found / not-ready) and an IDOR test.
+- Migrations apply cleanly from empty `recoveryai_evidence` and `recoveryai_claims`
+  databases (drop/recreate, then `./scripts/migrate.sh`).
+- Manually verified against the live `./scripts/dev.sh` stack, driven from inside the
+  real browser session (not curl) for the upload step: signed up, uploaded a real PDF
+  through the actual proxy + evidence-service + MinIO, created a policy referencing it,
+  then confirmed from a second victim's session that reading the document, its
+  download-url, and the policy all 404, while a promoted admin account could still read
+  the document. This is the literal phase gate.
+- `apps/platform-web/e2e/evidence-upload.spec.ts` (Playwright): signs up, uploads a real
+  file via `page.setInputFiles`, and saves the policy — the only step Phase 1's approach
+  (calling `app.handle()` directly) can't reach, since that never round-trips actual
+  multipart form data through the browser and the Next.js proxy.
+
+### Deviations from the plan, and why
+
+1. **A new shared package, `@recoveryai/rate-limit-ts`.** Evidence-service's upload
+   endpoint needed the same fixed-window limiter auth-service already had; moved out of
+   `auth-service/src/lib/rate-limit.ts` rather than copy-pasted, following the same
+   judgment call as `internal-auth-ts` in Phase 1 — a second real caller is what
+   justifies the extraction, not doing it preemptively.
+2. **`documents.sizeBytes` is `bigint` in Postgres but handled as a JS `number`**
+   (`{ mode: 'number' }`), not a `bigint` value in application code. Safe up to ~9
+   petabytes, far beyond `MAX_UPLOAD_SIZE_BYTES`; avoids `bigint`/`number` friction
+   throughout the route and test code for no real benefit at this scale.
+3. **SHA-256 on the direct-upload path is computed server-side from the request body**
+   (a real hash of real bytes); on the presigned two-step path, `complete-upload`
+   currently trusts a client-declared SHA-256 rather than re-fetching the object from
+   MinIO to rehash it. Documented rather than silently accepted: this is real
+   corruption/tamper detection on the path the frontend actually uses, and only a
+   convenience checksum (no independent verification) on the presigned path, which is
+   unused by any current caller. Independent server-side rehashing of the presigned
+   path is a candidate for the security-hardening phase.

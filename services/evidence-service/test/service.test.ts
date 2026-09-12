@@ -7,6 +7,7 @@ const env = {
   PORT: '3004',
   DATABASE_URL: 'postgres://localhost:5432/recoveryai_evidence',
   LOG_LEVEL: 'fatal',
+  JWT_SECRET: 'service-test-secret-at-least-32-characters',
 };
 
 const logger = createLogger({

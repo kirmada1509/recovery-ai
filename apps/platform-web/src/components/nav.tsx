@@ -25,6 +25,7 @@ export function Nav() {
         <>
           <Link href="/profile">Profile</Link>
           <Link href="/kyc">KYC status</Link>
+          <Link href="/policy">Policy</Link>
           <span style={{ marginLeft: 'auto', color: 'var(--muted)' }}>{user.email}</span>
           <button
             type="button"

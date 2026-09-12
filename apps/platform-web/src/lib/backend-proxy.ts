@@ -24,11 +24,13 @@ export async function proxyToBackend(
   if (contentType) forwardedHeaders.set('content-type', contentType);
   forwardedHeaders.set('x-request-id', crypto.randomUUID());
 
+  // `arrayBuffer`, not `text` — a multipart file upload is binary and would
+  // be corrupted by a UTF-8 round-trip.
   const hasBody = !['GET', 'HEAD'].includes(request.method);
   const backendResponse = await fetch(targetUrl, {
     method: request.method,
     headers: forwardedHeaders,
-    body: hasBody ? await request.text() : undefined,
+    body: hasBody ? await request.arrayBuffer() : undefined,
     redirect: 'manual',
   });
 
@@ -51,3 +53,5 @@ export async function proxyToBackend(
 
 export const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL ?? 'http://localhost:3001';
 export const IDENTITY_SERVICE_URL = process.env.IDENTITY_SERVICE_URL ?? 'http://localhost:3002';
+export const CLAIMS_SERVICE_URL = process.env.CLAIMS_SERVICE_URL ?? 'http://localhost:3003';
+export const EVIDENCE_SERVICE_URL = process.env.EVIDENCE_SERVICE_URL ?? 'http://localhost:3004';

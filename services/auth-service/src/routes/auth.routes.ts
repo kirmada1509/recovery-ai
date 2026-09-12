@@ -13,7 +13,7 @@ import {
   type SessionContext,
 } from '../domain/sessions.ts';
 import { resolveAuthUser, requireUser } from '../lib/auth-context.ts';
-import { RateLimiter } from '../lib/rate-limit.ts';
+import { RateLimiter } from '@recoveryai/rate-limit-ts';
 import { eq } from 'drizzle-orm';
 
 export interface AuthRoutesOptions {

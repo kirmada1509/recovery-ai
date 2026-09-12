@@ -1,0 +1,18 @@
+{
+  "name": "@recoveryai/rate-limit-ts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@recoveryai/observability-ts": "workspace:*"
+  },
+  "devDependencies": {
+    "@recoveryai/ts-config": "workspace:*",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,18 +1,39 @@
+import { z } from 'zod';
 import {
   baseServiceEnvSchema,
   loadServiceConfig,
   type BaseServiceConfig,
 } from '@recoveryai/config-ts';
 
-/**
- * Policies, claims, mandates, authorizations and filings.
- * Configuration is validated at startup; an invalid environment stops the process
- * before it can serve a request (plan Section 4.6).
- */
+const claimsEnvSchema = baseServiceEnvSchema.extend({
+  JWT_SECRET: z.string().min(32),
+  JWT_ISSUER: z.string().default('recoveryai-auth'),
+  JWT_AUDIENCE: z.string().default('recoveryai-platform'),
+
+  EVIDENCE_SERVICE_URL: z.string().url().default('http://localhost:3004'),
+  IDENTITY_SERVICE_URL: z.string().url().default('http://localhost:3002'),
+  VERIFICATION_SERVICE_URL: z.string().url().default('http://localhost:8001'),
+
+  // Shared with verification-service for the internal-service-authenticated
+  // dispatch/callback pair (plan Section 2.5).
+  INTERNAL_SERVICE_SECRET: z.string().min(20),
+  INTERNAL_ALLOWED_CALLERS: z
+    .string()
+    .default('verification-service')
+    .transform((v) => v.split(',').map((s) => s.trim())),
+
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  RATE_LIMIT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(20),
+
+  OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1_000),
+});
+
+export type ClaimsServiceConfig = BaseServiceConfig & z.infer<typeof claimsEnvSchema>;
+
 export function loadConfig(
   source: Record<string, string | undefined> = process.env,
-): BaseServiceConfig {
-  return loadServiceConfig('claims-service', baseServiceEnvSchema, {
+): ClaimsServiceConfig {
+  return loadServiceConfig('claims-service', claimsEnvSchema, {
     SERVICE_NAME: 'claims-service',
     PORT: source.PORT ?? '3003',
     ...source,

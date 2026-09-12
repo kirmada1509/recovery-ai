@@ -27,6 +27,7 @@ function KycPanel() {
 
   const load = useCallback(async () => {
     const result = await authFetch<{ case: KycCase | null; kycStatus: KycStatus }>(
+      'identity',
       'kyc/cases/latest',
     );
     setKase(result.case);
@@ -44,7 +45,7 @@ function KycPanel() {
     setError(null);
     setBusy(true);
     try {
-      await authFetch('kyc/cases', {
+      await authFetch('identity', 'kyc/cases', {
         method: 'POST',
         body: JSON.stringify({ fullName, identifierLast4 }),
       });
@@ -61,7 +62,7 @@ function KycPanel() {
     setError(null);
     setBusy(true);
     try {
-      await authFetch(`kyc/mock/${kase.id}/complete`, { method: 'POST' });
+      await authFetch('identity', `kyc/mock/${kase.id}/complete`, { method: 'POST' });
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to complete verification');

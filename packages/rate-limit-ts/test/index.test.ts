@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { RateLimiter } from '../../src/lib/rate-limit.ts';
+import { RateLimiter } from '../src/index.ts';
 
 describe('RateLimiter', () => {
   it('allows attempts under the limit', () => {

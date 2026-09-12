@@ -53,13 +53,17 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   /**
-   * Fetches an identity-service path (e.g. "profile", "kyc/cases") with the
-   * current access token attached. The access token is held only in memory —
-   * never in localStorage (plan Section 14.1) — so it does not survive a full
-   * page reload; callers see a signed-out state until the silent refresh
-   * above completes.
+   * Fetches a same-origin backend-proxy path (e.g. service "identity", path
+   * "profile") with the current access token attached. The access token is
+   * held only in memory — never in localStorage (plan Section 14.1) — so it
+   * does not survive a full page reload; callers see a signed-out state
+   * until the silent refresh above completes.
    */
-  authFetch: <T>(path: string, init?: RequestInit) => Promise<T>;
+  authFetch: <T>(
+    service: 'identity' | 'evidence' | 'claims',
+    path: string,
+    init?: RequestInit,
+  ) => Promise<T>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -122,12 +126,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const authFetch = useCallback(
-    async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
+    async <T,>(
+      service: 'identity' | 'evidence' | 'claims',
+      path: string,
+      init: RequestInit = {},
+    ): Promise<T> => {
       const headers = new Headers(init.headers);
       if (accessToken) headers.set('authorization', `Bearer ${accessToken}`);
-      if (init.body && !headers.has('content-type'))
+      // Never set content-type for a FormData body — fetch must generate its
+      // own multipart boundary, and an explicit header here would break it.
+      if (init.body && !(init.body instanceof FormData) && !headers.has('content-type')) {
         headers.set('content-type', 'application/json');
-      return parseOrThrow<T>(await fetch(`/api/identity/${path}`, { ...init, headers }));
+      }
+      return parseOrThrow<T>(await fetch(`/api/${service}/${path}`, { ...init, headers }));
     },
     [accessToken],
   );
