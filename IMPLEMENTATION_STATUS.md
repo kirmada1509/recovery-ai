@@ -9,7 +9,7 @@ Section 18. Updated as each phase gate passes.
 | **1** | Authentication and identity/KYC | ✅ **Complete** |
 | **2** | Evidence and policy upload | ✅ **Complete** |
 | **3** | Claims lifecycle | ✅ **Complete** |
-| 4 | Verification service | ⬜ Not started |
+| **4** | Verification service | ✅ **Complete** |
 | 5 | Policy RAG and AI agent core | ⬜ Not started |
 | 6 | Filing Gateway and sandbox backends | ⬜ Not started |
 | 7 | Recovery Inbox, negotiation and filing closed loop | ⬜ Not started |
@@ -292,3 +292,102 @@ driving logic yet — only the legal-transition table exists for those states, p
 outbox row will retry with backoff against a 404 until that phase lands; this is
 expected, not a bug, and is exercised directly in this phase's tests via the internal
 callback contract instead.
+
+## Phase 4 — complete
+
+| Task | Delivered |
+|---|---|
+| **P4-T1** Persistence | `verification-service`'s first real database: SQLAlchemy 2.0 async models (`verification_runs`, `verification_signals`) over `asyncpg`, Alembic wired to `DATABASE_URL` directly (no separate migration DSN), `scripts/migrate.sh` extended to run `alembic upgrade head` for any Python service with an `alembic.ini` |
+| **P4-T2** Provider interfaces | `Protocol` classes for `DisasterProvider`, `GeocoderProvider`, `ImageAnalysisProvider` (`providers/base.py`) |
+| **P4-T3** Mock providers + fixtures | `providers/mock.py` + `fixtures/disaster_events.json` — three named, deterministic fixtures (`chennai`/`ambiguous city`/`faketown`), plus a cautious (not confidently-positive) default for anywhere else |
+| **P4-T4** Scoring engine | `scoring/engine.py`: pure, deterministic, versioned (`ruleset_version`) weighted scoring exactly per plan §8.4 (0.40/0.30/0.15/0.15), with an explicit mandatory-contradiction override independent of the weighted total |
+| **P4-T5** Claims integration | `POST /v1/verifications` (internal-service-authenticated, byte-identical HMAC to the TS side — cross-language-verified directly), persists the run + signals, calls claims-service's callback; claims-service's existing (Phase-3-built) callback handler applies `pass→VERIFIED`, `review`/`fail`→`MANUAL_REVIEW` |
+| **P4-T6** Admin review UI | `/admin/reviews`: lists open `manual_review_tasks`, shows the real verification signals for the claim (via a new claims-service passthrough, `GET /v1/admin/claims/:id/verification`), approve/reject |
+| **P4-T7** Resume after review | `/v1/admin/manual-reviews/:id/resolve` now actually transitions the claim (`MANUAL_REVIEW → VERIFIED` on approve, `→ REJECTED` on reject) instead of Phase 3's shell that only recorded the decision |
+
+### Acceptance evidence
+
+- `./scripts/test-all.sh` passes: 159 Bun tests (claims-service's admin-resolve tests
+  strengthened to assert the claim's status, not just the event) + 38 pytest tests (up
+  from 27), including all three fixture decisions, the mandatory-contradiction override
+  firing independently of the weighted score, determinism (same input → byte-identical
+  score and decision), the internal-auth guard on every verification-service route
+  (previously only the POST route was guarded — see below), and idempotent replay of a
+  verification-result callback.
+- Migrations apply cleanly from an empty `recoveryai_verification` database.
+- **The literal phase gate, run against the real live stack, not simulated**: a single
+  claimant submitted three separate claims — one per fixture city — and the real,
+  running verification-service produced `pass` (score 0.9130), `review` (0.7250), and
+  `fail` (0.5450) exactly as designed, each persisted as a real `verification_runs` row.
+  claims-service's claims landed at `VERIFIED`, `MANUAL_REVIEW`, and `MANUAL_REVIEW`
+  respectively. An admin then opened `/admin/reviews` in the browser, saw the real
+  four-signal breakdown for the ambiguous claim (fetched live from verification-service
+  through claims-service's new passthrough), and approved it — the claim moved to
+  `VERIFIED` and the review queue emptied, confirmed both via direct API calls and by
+  reloading the actual page.
+- The updated Playwright claim-submission test now runs through this real pipeline too:
+  it submits a claim addressed in "Chennai" — the deterministic pass fixture — and polls
+  the claim detail page until the real cross-service round trip lands it on `VERIFIED`
+  with a `CLAIM_VERIFIED` event, rather than asserting the transient `VERIFYING` state
+  Phase 3's version checked (which raced against the now-real dispatcher and would have
+  been flaky).
+
+### Two bugs the live walkthrough caught that no test did
+
+1. **`INTERNAL_ALLOWED_CALLERS` is one shared env var applied identically to every
+   service** (`.env`/`dev.sh`), but each service's actual allowlist need differs:
+   identity-service needs `kyc-provider-mock`, claims-service needs
+   `verification-service`, and verification-service needs `claims-service`. The value
+   only listed the first two, so the very first real dispatch attempt got a `403` from
+   verification-service — every unit/integration test passed because each test supplies
+   its own explicit, correct allowlist rather than sharing this global value. Fixed by
+   making the shared value the union of every valid caller name across all services.
+2. **pydantic-settings crashed on process startup**, before the app ever bound a port,
+   trying to `json.loads()` the comma-separated `INTERNAL_ALLOWED_CALLERS` string —
+   `list[str]`-typed settings fields get JSON-decoded from raw environment strings
+   *before* any validator runs, and a manual pre-parse inside `load_settings()` doesn't
+   prevent that, because pydantic-settings evaluates its `EnvSettingsSource` against
+   `os.environ` unconditionally, independent of what's passed as init kwargs. Every
+   pytest test passed because they construct settings from a dict already containing a
+   real Python list in some cases and, where a string, hit a different code path than
+   `os.environ`-backed construction. Only actually starting the process under `dev.sh`
+   surfaced it. Fixed with pydantic-settings' documented answer to exactly this:
+   `Annotated[list[str], NoDecode, BeforeValidator(_split_csv)]`.
+
+### A third bug: verification-service's read endpoints had no authorization at all
+
+Building the admin review UI, the natural implementation was the browser calling
+verification-service directly for signal detail. Before wiring that, it became clear
+`GET /v1/verifications/:id` and `GET /v1/claims/:claimId/latest-verification` had never
+been guarded by anything — only the `POST` that creates a run checked internal-service
+auth. Anyone who could reach verification-service's port could read any claim's
+verification signals. Fixed two ways: those two GET routes now require the same
+internal-service HMAC auth as the POST route, and the admin UI never talks to
+verification-service directly at all — it goes through a new claims-service route
+(`GET /v1/admin/claims/:id/verification`) that already has real admin-JWT authorization
+and forwards the request server-side. This is also why no `/api/verification/*` proxy
+exists in `platform-web`: the browser has no business reaching that service directly,
+in the current architecture or a future one.
+
+### Deviations from the plan, and why
+
+1. **`DisasterProvider.check()` takes an additional `location_hint` (city name)
+   parameter** beyond the plan's `incident_type`/`occurred_at`/`lat`/`lng`. Phase 3's
+   claim wizard collects a free-text address/city, not coordinates — geocoding doesn't
+   exist yet — so the mock provider matches fixtures by city name, with lat/lng plumbed
+   through and ready for when a real geocoder lands.
+2. **A `fail` decision routes to `MANUAL_REVIEW`, matching Phase 3's earlier decision**,
+   not a distinct terminal state — documented there already, confirmed unchanged here
+   now that verification-service actually produces `fail` for real.
+3. **Location/metadata consistency is a fixed neutral-positive score (0.8)**, not a real
+   signal — no geocoding provider exists yet (plan Section 8.2 is explicit that absence
+   of location/EXIF data must never itself penalize a claim), so this is the honest
+   placeholder rather than a fabricated computation.
+
+### Not yet implemented (by design)
+
+Phase 5 (Agent Service) is what would consume a `VERIFIED` claim next — that queue/hook
+is deliberately absent, not stubbed, matching Phase 3's same note about P4-T7. A real
+(non-mock) disaster/geocoder/image-analysis provider is out of scope per the plan; the
+`Protocol` interfaces in `providers/base.py` are the boundary a real implementation
+would satisfy without any caller-side changes.

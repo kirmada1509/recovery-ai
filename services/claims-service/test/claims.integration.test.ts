@@ -638,10 +638,116 @@ describe('claims-service admin', () => {
       ),
     );
     expect(resolve.status).toBe(200);
+    const resolveBody = (await resolve.json()) as { claim: { status: string } };
+    expect(resolveBody.claim.status).toBe('VERIFIED');
 
     const events = await db.select().from(claimEvents).where(eq(claimEvents.claimId, claimId));
     const resolved = events.find((e) => e.type === 'MANUAL_REVIEW_RESOLVED');
     expect(resolved).toBeTruthy();
     expect((resolved?.payload as { decision: string }).decision).toBe('approve');
+
+    const claimAfter = await app.handle(
+      new Request(`http://localhost/v1/claims/${claimId}`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const claimAfterBody = (await claimAfter.json()) as { claim: { status: string } };
+    expect(claimAfterBody.claim.status).toBe('VERIFIED');
+  });
+
+  it('admin rejecting a manual review moves the claim to REJECTED', async () => {
+    stubDownstreamServices({ kycVerified: true, documentReady: true });
+    const app = buildApp();
+    const token = await accessTokenFor(USER_A);
+    const adminToken = await accessTokenFor(ADMIN, 'admin');
+    const claimId = await buildSubmittableClaim(app, token, USER_A);
+    await app.handle(
+      new Request(`http://localhost/v1/claims/${claimId}/submit`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'idempotency-key': crypto.randomUUID() },
+      }),
+    );
+    await app.handle(
+      new Request(`http://localhost/v1/internal/claims/${claimId}/verification-result`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...internalHeaders('verification-service') },
+        body: JSON.stringify({
+          verificationRunId: crypto.randomUUID(),
+          decision: 'fail',
+          overallScore: 0.2,
+          reasons: [],
+        }),
+      }),
+    );
+
+    const reviews = await app.handle(
+      new Request('http://localhost/v1/admin/manual-reviews', {
+        headers: { authorization: `Bearer ${adminToken}` },
+      }),
+    );
+    const reviewsBody = (await reviews.json()) as { manualReviews: { id: string }[] };
+
+    const resolve = await app.handle(
+      new Request(
+        `http://localhost/v1/admin/manual-reviews/${reviewsBody.manualReviews[0]?.id}/resolve`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ decision: 'reject', note: 'not plausible' }),
+        },
+      ),
+    );
+    expect(resolve.status).toBe(200);
+    const resolveBody = (await resolve.json()) as { claim: { status: string } };
+    expect(resolveBody.claim.status).toBe('REJECTED');
+  });
+
+  it('rejects resolving the same manual review twice', async () => {
+    stubDownstreamServices({ kycVerified: true, documentReady: true });
+    const app = buildApp();
+    const token = await accessTokenFor(USER_A);
+    const adminToken = await accessTokenFor(ADMIN, 'admin');
+    const claimId = await buildSubmittableClaim(app, token, USER_A);
+    await app.handle(
+      new Request(`http://localhost/v1/claims/${claimId}/submit`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'idempotency-key': crypto.randomUUID() },
+      }),
+    );
+    await app.handle(
+      new Request(`http://localhost/v1/internal/claims/${claimId}/verification-result`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...internalHeaders('verification-service') },
+        body: JSON.stringify({
+          verificationRunId: crypto.randomUUID(),
+          decision: 'review',
+          overallScore: 0.6,
+          reasons: [],
+        }),
+      }),
+    );
+    const reviews = await app.handle(
+      new Request('http://localhost/v1/admin/manual-reviews', {
+        headers: { authorization: `Bearer ${adminToken}` },
+      }),
+    );
+    const reviewsBody = (await reviews.json()) as { manualReviews: { id: string }[] };
+    const taskId = reviewsBody.manualReviews[0]?.id;
+
+    await app.handle(
+      new Request(`http://localhost/v1/admin/manual-reviews/${taskId}/resolve`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ decision: 'approve' }),
+      }),
+    );
+    const second = await app.handle(
+      new Request(`http://localhost/v1/admin/manual-reviews/${taskId}/resolve`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ decision: 'approve' }),
+      }),
+    );
+    expect(second.status).toBe(409);
   });
 });

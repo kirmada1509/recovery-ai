@@ -28,6 +28,7 @@ export function Nav() {
           <Link href="/policy">Policy</Link>
           <Link href="/claims">Claims</Link>
           {user.role === 'admin' && <Link href="/admin/claims">Admin</Link>}
+          {user.role === 'admin' && <Link href="/admin/reviews">Reviews</Link>}
           <span style={{ marginLeft: 'auto', color: 'var(--muted)' }}>{user.email}</span>
           <button
             type="button"

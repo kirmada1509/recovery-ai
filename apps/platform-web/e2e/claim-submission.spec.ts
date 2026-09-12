@@ -58,11 +58,25 @@ test('victim files and submits a claim through the wizard', async ({ page }) => 
   await page.getByRole('button', { name: 'Submit claim' }).click();
 
   await expect(page).toHaveURL(/\/claims\/[0-9a-f-]+$/);
-  await expect(page.getByText('Status: VERIFYING')).toBeVisible();
   await expect(page.getByText('CLAIM_CREATED')).toBeVisible();
   await expect(page.getByText('CLAIM_SUBMITTED')).toBeVisible();
   await expect(page.getByText('VERIFICATION_DISPATCHED')).toBeVisible();
 
+  // "Chennai" is verification-service's deterministic PASS fixture (Phase 4),
+  // so the outbox dispatcher's real round trip settles this to VERIFIED —
+  // usually within the dispatcher's ~1s poll interval, but reload rather than
+  // assume a fixed delay, since that trip crosses two real services.
+  await expect
+    .poll(
+      async () => {
+        await page.reload();
+        return page.getByText(/^Status: /).textContent();
+      },
+      { timeout: 15_000 },
+    )
+    .toBe('Status: VERIFIED');
+  await expect(page.getByText('CLAIM_VERIFIED')).toBeVisible();
+
   await page.goto('/claims');
-  await expect(page.getByText('VERIFYING')).toBeVisible();
+  await expect(page.getByText('VERIFIED')).toBeVisible();
 });

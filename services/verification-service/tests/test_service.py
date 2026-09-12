@@ -11,6 +11,7 @@ ENV = {
     "DATABASE_URL": "postgresql://user:pass@localhost:5432/recoveryai_verification",
     "LOG_LEVEL": "fatal",
     "OTEL_TRACES_ENABLED": "false",
+    "INTERNAL_SERVICE_SECRET": "service-test-internal-secret-20chars",
 }
 
 

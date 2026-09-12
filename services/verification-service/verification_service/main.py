@@ -8,6 +8,8 @@ from recoveryai_common.runtime import (
     postgres_readiness_check,
 )
 
+from verification_service.db.session import create_session_factory
+from verification_service.routes.verifications import register_verification_routes
 from verification_service.settings import load_settings
 
 
@@ -20,7 +22,12 @@ def build_app() -> FastAPI:
         pretty=settings.log_pretty,
     )
     readiness = ReadinessRegistry().register(postgres_readiness_check(str(settings.database_url)))
-    return create_service_app(settings=settings, readiness=readiness)
+    session_factory = create_session_factory(str(settings.database_url))
+
+    def configure(app: FastAPI) -> None:
+        register_verification_routes(app, settings, session_factory)
+
+    return create_service_app(settings=settings, readiness=readiness, configure=configure)
 
 
 app = build_app()

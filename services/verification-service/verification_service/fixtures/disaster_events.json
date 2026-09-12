@@ -1,0 +1,20 @@
+{
+  "chennai": {
+    "occurred": true,
+    "confidence": 0.97,
+    "eventName": "chennai-flood-2024-12",
+    "reason": "Incident location and date match a confirmed flood event"
+  },
+  "ambiguous city": {
+    "occurred": true,
+    "confidence": 0.5,
+    "eventName": "borderline-signal",
+    "reason": "A weak, unconfirmed signal exists near this location and date"
+  },
+  "faketown": {
+    "occurred": false,
+    "confidence": 0.95,
+    "eventName": null,
+    "reason": "No qualifying disaster event found anywhere near this location or date"
+  }
+}

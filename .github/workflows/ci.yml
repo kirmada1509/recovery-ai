@@ -104,6 +104,19 @@ jobs:
   python:
     name: Python
     runs-on: ubuntu-latest
+    services:
+      # verification-service's tests exercise real Alembic migrations and
+      # queries, not mocks — same rationale as the TypeScript services.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: recoveryai
+          POSTGRES_PASSWORD: recoveryai
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U recoveryai"
+          --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -119,6 +132,15 @@ jobs:
           uv run mypy python/common/src \
             services/verification-service/verification_service \
             services/agent-service/agent_service
+      - name: Create verification database
+        env:
+          PGPASSWORD: recoveryai
+        run: psql -h localhost -U recoveryai -d postgres -c "CREATE DATABASE recoveryai_verification"
+      - name: Apply migrations
+        working-directory: services/verification-service
+        env:
+          DATABASE_URL: postgresql://recoveryai:recoveryai@localhost:5432/recoveryai_verification
+        run: uv run alembic upgrade head
       - name: Unit tests
         run: uv run pytest -q
 
