@@ -391,3 +391,115 @@ is deliberately absent, not stubbed, matching Phase 3's same note about P4-T7. A
 (non-mock) disaster/geocoder/image-analysis provider is out of scope per the plan; the
 `Protocol` interfaces in `providers/base.py` are the boundary a real implementation
 would satisfy without any caller-side changes.
+
+## Phase 5 — complete
+
+| Task | Delivered |
+|---|---|
+| **Infra fix** | `docker-compose.yml`'s `postgres` image switched to `pgvector/pgvector:pg17`; `agent-service`'s first migration runs `CREATE EXTENSION IF NOT EXISTS vector` before any `vector`-typed column |
+| **P5-T1** Persistence | `agent-service`'s first database: SQLAlchemy 2.0 async models (`agent_runs`, `policy_chunks`, the latter with a `pgvector` `Vector(384)` column), Alembic wired the same way as `verification-service`'s. `negotiation_*` tables from plan §6.7 are deliberately not created — nothing populates them until Phase 7, matching Phase 3's precedent skipping `negotiation_mandates` |
+| **P5-T2** Policy extraction/chunking/indexing | `providers/text_extraction.py` (`pypdf`, with a mock-OCR fixture-sidecar fallback), `chunking.py` (page-aware, ~800 char / ~150 char overlap, best-effort heading detection), `providers/embeddings.py` (deterministic seeded-hash mock, 384-dim), `indexing.py` (delete-then-insert re-index), `retrieval.py` (pgvector cosine distance, always filtered by `policy_id`) |
+| **P5-T3** LLM provider interface | `providers/llm.py`: `Protocol LLMProvider`, `MockLLMProvider` (deterministic keyword-overlap coverage derivation), `OpenAICompatibleProvider` (real adapter, retry-once-then-raise on invalid structured output) |
+| **P5-T4** Coverage extraction | `models/coverage.py` (`CoverageFinding`/`PolicyCitation`), `coverage_extraction.py` — citations are asserted against the actually-retrieved chunk set, never trusted from the LLM's own output |
+| **P5-T5** Entitlement calculator | `entitlement.py`: pure, deterministic, integer-paise-only, versioned widening rule (`ENTITLEMENT_RULESET_VERSION`); low ≤ point ≤ high and reconciling totals proven by hypothesis property tests |
+| **P5-T6/T7/T8** Workflow, dossier, wait/resume | `workflow/graph.py`: a hand-rolled resumable node sequence (not the LangGraph *library* — see Deviations) implementing `load_claim → ensure_verified → ensure_policy_indexed → parse_policy_coverage → build_claim_dossier → identify_missing_evidence → [wait] \| [continue]`; `dossier.py` assembles the structured dossier; `POST /v1/agent/claims/:id/{start,resume}` and `GET /v1/agent/claims/:id/state` |
+| **P5-T9** Negotiation value model + item ledger | `negotiation/value_model.py`, `negotiation/item_ledger.py` — pure functions only, no table, no wiring; property-tested with `hypothesis` (new dev dependency) |
+| **Completing Phase 4's deferred hook** | `claims-service`: `agentDispatchOutbox` table, `workers/agent-dispatcher.ts` (identical outbox-poll pattern to `verification-dispatcher.ts`), `POST /v1/internal/claims/:id/agent-update` (idempotent, records `AGENT_DOSSIER_READY`, no status transition — `READY_FOR_INSURER` onward is Phase 6/7). The dispatch fires on **every** path that reaches `VERIFIED`: the direct verification `pass` path and the admin manual-review-approve path |
+
+### Acceptance evidence
+
+- `./scripts/test-all.sh` passes: 165 Bun tests (up from ~155) + 72 pytest tests (up
+  from 38) — chunking, mock-embedding determinism, retrieval's `policy_id` filtering,
+  coverage-extraction citation integrity, entitlement band monotonicity/integer-only
+  arithmetic/reconciliation (hypothesis), the negotiation value model and item ledger
+  (hypothesis), the OpenAI-compatible adapter's retry-then-raise (mocked HTTP, no live
+  call), and the workflow wait/resume gate as a named HTTP-level test.
+- `ruff check`, `ruff format --check`, and `mypy --strict` all pass across
+  `python/common`, `verification-service`, and `agent-service`.
+- Migrations apply cleanly from an empty `recoveryai_agent` database, including
+  `CREATE EXTENSION vector` against the new `pgvector/pgvector:pg17` image.
+  `docker compose up -d --wait` reaches healthy on every service after the Postgres
+  image swap.
+- **The literal phase gate, run against the real live stack, not simulated**: signup →
+  KYC → policy upload → claim (one item, "Damaged sofa") → submit → real
+  verification-service `pass` (score 0.913, "Chennai" fixture) → real agent-service
+  dispatch via the outbox → a real `AGENT_DOSSIER_READY` claim event. The dossier
+  fetched from `GET /v1/agent/claims/:id/state` shows: the item's coverage finding
+  (`partial`, confidence 0.6, one citation pointing at an actually-retrieved policy
+  chunk by id/page), an entitlement band of low 3,000.00 / point 5,000.00 / high
+  5,000.00 (INR, from 5,000.00 claimed), and the assembled dossier with verification
+  summary and policy citations. A second, independent run started directly against
+  agent-service with two items and zero evidence documents paused
+  (`status: waiting`, `waitReason: missing_documents`, dossier still produced) and,
+  after a `resume` call supplying two evidence document ids, completed
+  (`status: completed`) — the wait/resume gate demonstrated live, not only in pytest.
+  The existing Playwright `claim-submission.spec.ts` (unmodified) still passes end to
+  end against this same real pipeline.
+
+### A bug the live walkthrough caught that no test did
+
+**`pypdf.PdfReader` raises `PdfStreamError` on bytes that aren't a well-formed PDF at
+all**, not just on ones with too little extractable text. `providers/text_extraction.py`
+only guarded the "too little text extracted" case (the plan's documented reason to fall
+back to OCR); it never guarded against `PdfReader()` itself throwing during
+construction. Every pytest test passed because they all patch `extract_pages` or
+`index_policy` at a level above `pypdf`, never exercising a real malformed-PDF byte
+string end to end. The live walkthrough's uploaded document (an ordinary text file with
+a `.pdf` extension and `application/pdf` content-type — evidence-service does not
+sniff bytes against its declared content-type, by design, since real scanned documents
+are legitimately messy) crashed the whole indexing node with a 500, which the outbox
+dispatcher then retried and backed off on repeatedly. Fixed by catching
+`pypdf.errors.PdfReadError` around construction and falling through to the same
+OCR-fixture fallback path already used for "too little text," with a new test
+(`test_text_extraction.py`) covering both the fixture-hit and fixture-miss cases
+directly against unparseable bytes.
+
+### Deviations from the plan, and why
+
+1. **The workflow is a hand-rolled resumable node sequence, not the LangGraph
+   *library* itself.** The plan explicitly allowed this ("persist a JSON checkpoint
+   table explicitly" as the fallback to a graph library's own checkpointer) and asked
+   for an empirical decision during implementation. Resuming needs precise
+   node-level control — re-entering a compiled graph from an arbitrary internal node
+   without LangGraph's own checkpointer wired in is exactly the integration LangGraph
+   would need time to get right, and `agent_runs.state JSONB` (already required by the
+   plan regardless of graph library) already gives correct, tested resumability. The
+   node names, order, and semantics match the plan's LangGraph design exactly, so
+   swapping in a real LangGraph-backed executor later is a contained change.
+2. **agent-service fetches the policy PDF itself, via a new internal-service-auth path
+   on evidence-service's `download-url` route**, rather than claims-service fetching a
+   signed URL with the caller's own token and forwarding it (the plan's stated (b)
+   option). At agent-dispatch time there is no "caller's own token" — the dispatch is
+   an asynchronous outbox tick or an admin's manual-review approval, not a live
+   end-user request — so that option didn't actually have a token to use. Evidence-service's
+   `GET /v1/documents/:id/download-url` now accepts internal-service HMAC auth as an
+   alternative to the existing end-user-ownership check (never a replacement for it);
+   `agent-service` was added to the shared `INTERNAL_ALLOWED_CALLERS` value for this
+   purpose, same as `verification-service`/`claims-service` already were for theirs.
+3. **The missing-evidence heuristic is claim-level, not per-item**: it compares the
+   count of linked evidence documents against the count of claim items, rather than
+   checking that each specific item has its own supporting evidence. Claims-service's
+   current schema links evidence to a *claim*, not to individual *items*
+   (`claim_evidence_links` has no `item_id`), so a genuinely per-item check would need a
+   schema change this phase doesn't otherwise need. The heuristic is real code, not a
+   fake — it drives an actual pause/resume, documented as a heuristic in
+   `identify_missing_evidence`'s own docstring.
+4. **`sumInsuredPaise` was not added to the agent-dispatch snapshot or the `policies`
+   table.** The plan mentioned it as needed by P5-T9's value model "later" — but P5-T9
+   is explicitly pure, unwired functions this phase, exercised only by its own
+   hypothesis tests with directly-supplied fixture values. Adding an unused column and
+   an unused payload field now would be dead weight until Phase 7 actually wires
+   negotiation; deferred to that phase instead.
+
+### Not yet implemented (by design)
+
+`READY_FOR_INSURER` onward — insurer submission, negotiation, filing, escalation — is
+Phase 6/7 and is not stubbed. The `negotiation_sessions`/`negotiation_rounds`/
+`negotiation_item_ledger`/`negotiation_blocked_moves` tables from plan §6.7 do not
+exist yet; `negotiation/value_model.py` and `negotiation/item_ledger.py` are pure
+functions with no persistence and no caller. `recovery-inbox-service` is untouched
+Phase-0 skeleton — the `resume` endpoint is called directly against agent-service for
+this phase's gate, standing in for what recovery-inbox-service will call once it's
+built. A real (non-mock) LLM provider is out of scope; `OpenAICompatibleProvider`
+exists and is unit-tested for its retry-then-raise behavior only, never exercised with
+live credentials.

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@recoveryai/config-ts": "workspace:*",
+    "@recoveryai/internal-auth-ts": "workspace:*",
     "@recoveryai/observability-ts": "workspace:*",
     "@recoveryai/service-runtime": "workspace:*",
     "drizzle-orm": "^0.45.2",

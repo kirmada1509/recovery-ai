@@ -11,6 +11,7 @@ ENV = {
     "DATABASE_URL": "postgresql://user:pass@localhost:5432/recoveryai_agent",
     "LOG_LEVEL": "fatal",
     "OTEL_TRACES_ENABLED": "false",
+    "INTERNAL_SERVICE_SECRET": "dev-only-internal-service-secret-20chars",
 }
 
 

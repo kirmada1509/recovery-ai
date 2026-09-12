@@ -7,6 +7,7 @@ import type { Database } from '../db/client.ts';
 import { claims, manualReviewTasks } from '../db/schema.ts';
 import { assertTransition } from '../domain/claim-state-machine.ts';
 import { recordClaimEvent } from '../domain/claim-events.ts';
+import { queueAgentDispatch } from '../lib/agent-dispatch.ts';
 import { resolveAuthUser, requireRole } from '../lib/auth-context.ts';
 
 export interface AdminRoutesOptions {
@@ -120,6 +121,23 @@ export function adminRoutes(options: AdminRoutesOptions) {
             actorId: admin.sub,
             payload: { decision: body.decision, note: body.note ?? null, taskId: task.id },
           });
+
+          if (nextClaimStatus === 'VERIFIED') {
+            // An admin override is claims-service's own decision, not a
+            // relayed verification-service score — the agent workflow only
+            // needs to know the claim is now effectively verified (plan
+            // Section 18 P5).
+            await queueAgentDispatch(
+              tx,
+              claim,
+              {
+                decision: 'pass',
+                overallScore: 0,
+                reasons: [`Manually approved via admin review (task ${task.id})`],
+              },
+              `agent-dispatch:manual-review:${task.id}`,
+            );
+          }
         });
 
         return {

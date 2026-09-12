@@ -293,6 +293,34 @@ export type VerificationDispatchOutboxRow = typeof verificationDispatchOutbox.$i
 export type NewVerificationDispatchOutboxRow = typeof verificationDispatchOutbox.$inferInsert;
 
 /**
+ * Transactional outbox for dispatching agent-service runs (plan Section 18
+ * P5, completing Phase 4's deliberately-deferred hook) — identical shape
+ * and dispatch discipline to `verificationDispatchOutbox`. Inserted in the
+ * same transaction as the `MANUAL_REVIEW -> VERIFIED` transition, so a
+ * claim can never reach `VERIFIED` without an agent run queued.
+ */
+export const agentDispatchOutbox = pgTable(
+  'agent_dispatch_outbox',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    claimId: uuid('claim_id').notNull(),
+    payload: jsonb('payload').notNull(),
+    status: outboxStatusEnum('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    idempotencyKey: text('idempotency_key').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('agent_dispatch_outbox_status_idx').on(table.status, table.nextAttemptAt)],
+);
+
+export type AgentDispatchOutboxRow = typeof agentDispatchOutbox.$inferSelect;
+export type NewAgentDispatchOutboxRow = typeof agentDispatchOutbox.$inferInsert;
+
+/**
  * Idempotency ledger for mutating endpoints that take an `Idempotency-Key`
  * header (plan conventions, Section 4). The literal Phase 3 gate — a
  * duplicate submit with the same key does no new work — is enforced here.

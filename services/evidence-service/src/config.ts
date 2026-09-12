@@ -30,6 +30,17 @@ const evidenceEnvSchema = baseServiceEnvSchema.extend({
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(20),
+
+  // Shared with agent-service (plan Section 2.5): agent-service needs the
+  // policy PDF bytes to index for RAG, and only an internal-service-signed
+  // request can fetch a download URL without an end-user's own token — the
+  // dispatch that triggers indexing happens on a background outbox tick,
+  // not inside a browser request (plan Section 18 P5-T2).
+  INTERNAL_SERVICE_SECRET: z.string().min(20),
+  INTERNAL_ALLOWED_CALLERS: z
+    .string()
+    .default('agent-service')
+    .transform((v) => v.split(',').map((s) => s.trim())),
 });
 
 export type EvidenceServiceConfig = BaseServiceConfig & z.infer<typeof evidenceEnvSchema>;

@@ -178,6 +178,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@recoveryai/config-ts": "workspace:*",
+        "@recoveryai/internal-auth-ts": "workspace:*",
         "@recoveryai/observability-ts": "workspace:*",
         "@recoveryai/rate-limit-ts": "workspace:*",
         "@recoveryai/service-runtime": "workspace:*",

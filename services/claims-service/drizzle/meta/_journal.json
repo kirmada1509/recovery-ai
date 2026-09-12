@@ -15,6 +15,13 @@
       "when": 1789207150566,
       "tag": "0001_clever_living_lightning",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789214890750,
+      "tag": "0002_slimy_george_stacy",
+      "breakpoints": true
     }
   ]
 }

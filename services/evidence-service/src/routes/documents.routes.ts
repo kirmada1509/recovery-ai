@@ -1,3 +1,7 @@
+import {
+  INTERNAL_SERVICE_HEADERS,
+  verifyInternalServiceRequest,
+} from '@recoveryai/internal-auth-ts';
 import { AppError } from '@recoveryai/observability-ts';
 import { RateLimiter } from '@recoveryai/rate-limit-ts';
 import { eq } from 'drizzle-orm';
@@ -216,10 +220,30 @@ export function documentsRoutes(options: DocumentsRoutesOptions) {
       if (!doc || !canAccess(doc, user)) throw new AppError('NOT_FOUND', 'Document not found', 404);
       return { document: publicDocument(doc) };
     })
-    .get('/v1/documents/:id/download-url', async ({ authUser, params }) => {
-      const user = requireUser(authUser);
+    .get('/v1/documents/:id/download-url', async ({ authUser, headers, params }) => {
+      // agent-service needs policy PDF bytes to index for RAG (plan Section
+      // 18 P5-T2), triggered from a background outbox tick with no
+      // end-user token in hand — an internal-service-signed request is
+      // accepted as an alternative to the ownership-checked end-user path,
+      // never a replacement for it (canAccess below is skipped only here).
+      const isInternalCaller = verifyInternalServiceRequest(
+        {
+          service: headers[INTERNAL_SERVICE_HEADERS.service],
+          timestamp: headers[INTERNAL_SERVICE_HEADERS.timestamp],
+          signature: headers[INTERNAL_SERVICE_HEADERS.signature],
+        },
+        {
+          secret: config.INTERNAL_SERVICE_SECRET,
+          allowedServices: config.INTERNAL_ALLOWED_CALLERS,
+        },
+      );
+
       const [doc] = await db.select().from(documents).where(eq(documents.id, params.id)).limit(1);
-      if (!doc || !canAccess(doc, user)) throw new AppError('NOT_FOUND', 'Document not found', 404);
+      if (!doc) throw new AppError('NOT_FOUND', 'Document not found', 404);
+      if (!isInternalCaller) {
+        const user = requireUser(authUser);
+        if (!canAccess(doc, user)) throw new AppError('NOT_FOUND', 'Document not found', 404);
+      }
       if (doc.uploadStatus !== 'ready') {
         throw new AppError('DOCUMENT_NOT_READY', 'Document is not available for download', 409);
       }

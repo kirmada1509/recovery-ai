@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { createLogger } from '@recoveryai/observability-ts';
 import { createServiceApp } from '@recoveryai/service-runtime';
 import { SignJWT } from 'jose';
+import { INTERNAL_SERVICE_HEADERS, signInternalServiceRequest } from '@recoveryai/internal-auth-ts';
 import { loadConfig } from '../src/config.ts';
 import { createDatabase } from '../src/db/client.ts';
 import { documents } from '../src/db/schema.ts';
@@ -19,7 +20,18 @@ const env = {
   MINIO_ROOT_PASSWORD: 'recoveryai-dev-secret',
   MINIO_EVIDENCE_BUCKET: 'recoveryai-evidence',
   RATE_LIMIT_MAX_ATTEMPTS: '1000',
+  INTERNAL_SERVICE_SECRET: 'integration-test-internal-secret-20',
+  INTERNAL_ALLOWED_CALLERS: 'agent-service',
 };
+
+function internalHeaders(service: string): Record<string, string> {
+  const token = signInternalServiceRequest(env.INTERNAL_SERVICE_SECRET, service);
+  return {
+    [INTERNAL_SERVICE_HEADERS.service]: token.service,
+    [INTERNAL_SERVICE_HEADERS.timestamp]: token.timestamp,
+    [INTERNAL_SERVICE_HEADERS.signature]: token.signature,
+  };
+}
 
 const config = loadConfig(env);
 const db = createDatabase(config.DATABASE_URL);
@@ -285,6 +297,34 @@ describe('evidence-service documents — IDOR', () => {
       }),
     );
     expect(remove.status).toBe(404);
+  });
+
+  it('agent-service can fetch a download URL via internal-service auth without an end-user token', async () => {
+    const app = buildApp();
+    const tokenA = await accessTokenFor(USER_A);
+    const documentId = await uploadDocumentAs(app, tokenA);
+
+    const response = await app.handle(
+      new Request(`http://localhost/v1/documents/${documentId}/download-url`, {
+        headers: internalHeaders('agent-service'),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { downloadUrl: string };
+    expect(body.downloadUrl).toContain('recoveryai-evidence');
+  });
+
+  it('rejects a download-url internal-service caller not on the allowlist', async () => {
+    const app = buildApp();
+    const tokenA = await accessTokenFor(USER_A);
+    const documentId = await uploadDocumentAs(app, tokenA);
+
+    const response = await app.handle(
+      new Request(`http://localhost/v1/documents/${documentId}/download-url`, {
+        headers: internalHeaders('some-other-service'),
+      }),
+    );
+    expect(response.status).toBe(401);
   });
 
   it('an admin can read a document that is not theirs', async () => {

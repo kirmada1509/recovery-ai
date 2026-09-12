@@ -105,10 +105,11 @@ jobs:
     name: Python
     runs-on: ubuntu-latest
     services:
-      # verification-service's tests exercise real Alembic migrations and
-      # queries, not mocks — same rationale as the TypeScript services.
+      # verification-service and agent-service's tests exercise real Alembic
+      # migrations and queries, not mocks — same rationale as the TypeScript
+      # services. agent-service needs pgvector for policy_chunks (Section 6.7).
       postgres:
-        image: postgres:17-alpine
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_USER: recoveryai
           POSTGRES_PASSWORD: recoveryai
@@ -132,14 +133,21 @@ jobs:
           uv run mypy python/common/src \
             services/verification-service/verification_service \
             services/agent-service/agent_service
-      - name: Create verification database
+      - name: Create databases
         env:
           PGPASSWORD: recoveryai
-        run: psql -h localhost -U recoveryai -d postgres -c "CREATE DATABASE recoveryai_verification"
+        run: |
+          psql -h localhost -U recoveryai -d postgres -c "CREATE DATABASE recoveryai_verification"
+          psql -h localhost -U recoveryai -d postgres -c "CREATE DATABASE recoveryai_agent"
       - name: Apply migrations
         working-directory: services/verification-service
         env:
           DATABASE_URL: postgresql://recoveryai:recoveryai@localhost:5432/recoveryai_verification
+        run: uv run alembic upgrade head
+      - name: Apply migrations
+        working-directory: services/agent-service
+        env:
+          DATABASE_URL: postgresql://recoveryai:recoveryai@localhost:5432/recoveryai_agent
         run: uv run alembic upgrade head
       - name: Unit tests
         run: uv run pytest -q

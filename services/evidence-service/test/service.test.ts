@@ -8,6 +8,7 @@ const env = {
   DATABASE_URL: 'postgres://localhost:5432/recoveryai_evidence',
   LOG_LEVEL: 'fatal',
   JWT_SECRET: 'service-test-secret-at-least-32-characters',
+  INTERNAL_SERVICE_SECRET: 'service-test-internal-secret-20chars',
 };
 
 const logger = createLogger({

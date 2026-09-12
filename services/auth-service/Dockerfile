@@ -6,6 +6,7 @@ FROM base AS deps
 COPY package.json bun.lock ./
 COPY packages/config-ts/package.json packages/config-ts/
 COPY packages/observability-ts/package.json packages/observability-ts/
+COPY packages/rate-limit-ts/package.json packages/rate-limit-ts/
 COPY packages/service-runtime/package.json packages/service-runtime/
 COPY packages/ts-config/package.json packages/ts-config/
 COPY services/auth-service/package.json services/auth-service/

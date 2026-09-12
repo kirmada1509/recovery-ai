@@ -7,6 +7,7 @@ import { SignJWT } from 'jose';
 import { loadConfig } from '../src/config.ts';
 import { createDatabase } from '../src/db/client.ts';
 import {
+  agentDispatchOutbox,
   claimEvents,
   claimEvidenceLinks,
   claimItems,
@@ -28,7 +29,7 @@ const env = {
   LOG_LEVEL: 'fatal',
   JWT_SECRET: 'integration-test-secret-at-least-32-characters',
   INTERNAL_SERVICE_SECRET: 'integration-test-internal-secret-20',
-  INTERNAL_ALLOWED_CALLERS: 'verification-service',
+  INTERNAL_ALLOWED_CALLERS: 'verification-service,agent-service',
 };
 
 const config = loadConfig(env);
@@ -169,6 +170,7 @@ async function buildSubmittableClaim(
 beforeEach(async () => {
   await db.delete(claimEvents);
   await db.delete(verificationDispatchOutbox);
+  await db.delete(agentDispatchOutbox);
   await db.delete(idempotencyKeys);
   await db.delete(claimEvidenceLinks);
   await db.delete(claimItems);
@@ -184,6 +186,7 @@ afterEach(() => {
 afterAll(async () => {
   await db.delete(claimEvents);
   await db.delete(verificationDispatchOutbox);
+  await db.delete(agentDispatchOutbox);
   await db.delete(idempotencyKeys);
   await db.delete(claimEvidenceLinks);
   await db.delete(claimItems);
@@ -580,6 +583,142 @@ describe('claims-service verification callback', () => {
     const events = await db.select().from(claimEvents).where(eq(claimEvents.claimId, claimId));
     expect(events.filter((e) => e.type === 'CLAIM_VERIFIED')).toHaveLength(1);
   });
+
+  it('queues exactly one agent-dispatch outbox row when the claim becomes VERIFIED', async () => {
+    stubDownstreamServices({ kycVerified: true, documentReady: true });
+    const app = buildApp();
+    const token = await accessTokenFor(USER_A);
+    const claimId = await buildSubmittableClaim(app, token, USER_A);
+    await app.handle(
+      new Request(`http://localhost/v1/claims/${claimId}/submit`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'idempotency-key': crypto.randomUUID() },
+      }),
+    );
+
+    const runId = crypto.randomUUID();
+    const payload = JSON.stringify({
+      verificationRunId: runId,
+      decision: 'pass',
+      overallScore: 0.9,
+      reasons: [],
+    });
+
+    await app.handle(
+      new Request(`http://localhost/v1/internal/claims/${claimId}/verification-result`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...internalHeaders('verification-service') },
+        body: payload,
+      }),
+    );
+    // Retried callback for the same run must not queue a second dispatch.
+    await app.handle(
+      new Request(`http://localhost/v1/internal/claims/${claimId}/verification-result`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...internalHeaders('verification-service') },
+        body: payload,
+      }),
+    );
+
+    const outboxRows = await db
+      .select()
+      .from(agentDispatchOutbox)
+      .where(eq(agentDispatchOutbox.claimId, claimId));
+    expect(outboxRows).toHaveLength(1);
+    const outboxPayload = outboxRows[0]?.payload as {
+      items: unknown[];
+      evidenceDocumentIds: string[];
+    };
+    expect(outboxPayload.items).toHaveLength(1);
+    expect(outboxPayload.evidenceDocumentIds).toEqual([DOCUMENT_ID]);
+  });
+
+  it('does not queue an agent-dispatch row when the claim goes to MANUAL_REVIEW', async () => {
+    stubDownstreamServices({ kycVerified: true, documentReady: true });
+    const app = buildApp();
+    const token = await accessTokenFor(USER_A);
+    const claimId = await buildSubmittableClaim(app, token, USER_A);
+    await app.handle(
+      new Request(`http://localhost/v1/claims/${claimId}/submit`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'idempotency-key': crypto.randomUUID() },
+      }),
+    );
+
+    await app.handle(
+      new Request(`http://localhost/v1/internal/claims/${claimId}/verification-result`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...internalHeaders('verification-service') },
+        body: JSON.stringify({
+          verificationRunId: crypto.randomUUID(),
+          decision: 'review',
+          overallScore: 0.6,
+          reasons: ['ambiguous'],
+        }),
+      }),
+    );
+
+    const outboxRows = await db
+      .select()
+      .from(agentDispatchOutbox)
+      .where(eq(agentDispatchOutbox.claimId, claimId));
+    expect(outboxRows).toHaveLength(0);
+  });
+});
+
+describe('claims-service agent-update callback', () => {
+  it('rejects a callback without a valid internal-service signature', async () => {
+    const app = buildApp();
+    const response = await app.handle(
+      new Request(`http://localhost/v1/internal/claims/${crypto.randomUUID()}/agent-update`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agentRunId: crypto.randomUUID(), status: 'completed' }),
+      }),
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('records AGENT_DOSSIER_READY once and is idempotent on a retried agentRunId', async () => {
+    stubDownstreamServices({ kycVerified: true, documentReady: true });
+    const app = buildApp();
+    const token = await accessTokenFor(USER_A);
+    const claimId = await buildSubmittableClaim(app, token, USER_A);
+    await app.handle(
+      new Request(`http://localhost/v1/claims/${claimId}/submit`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'idempotency-key': crypto.randomUUID() },
+      }),
+    );
+
+    const agentRunId = crypto.randomUUID();
+    const payload = JSON.stringify({
+      agentRunId,
+      status: 'completed',
+      dossier: { claimId },
+    });
+
+    const first = await app.handle(
+      new Request(`http://localhost/v1/internal/claims/${claimId}/agent-update`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...internalHeaders('agent-service') },
+        body: payload,
+      }),
+    );
+    expect(first.status).toBe(200);
+
+    const second = await app.handle(
+      new Request(`http://localhost/v1/internal/claims/${claimId}/agent-update`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...internalHeaders('agent-service') },
+        body: payload,
+      }),
+    );
+    expect(second.status).toBe(200);
+
+    const events = await db.select().from(claimEvents).where(eq(claimEvents.claimId, claimId));
+    expect(events.filter((e) => e.type === 'AGENT_DOSSIER_READY')).toHaveLength(1);
+  });
 });
 
 describe('claims-service admin', () => {
@@ -645,6 +784,12 @@ describe('claims-service admin', () => {
     const resolved = events.find((e) => e.type === 'MANUAL_REVIEW_RESOLVED');
     expect(resolved).toBeTruthy();
     expect((resolved?.payload as { decision: string }).decision).toBe('approve');
+
+    const outboxRows = await db
+      .select()
+      .from(agentDispatchOutbox)
+      .where(eq(agentDispatchOutbox.claimId, claimId));
+    expect(outboxRows).toHaveLength(1);
 
     const claimAfter = await app.handle(
       new Request(`http://localhost/v1/claims/${claimId}`, {

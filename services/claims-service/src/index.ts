@@ -10,6 +10,7 @@ import { adminRoutes } from './routes/admin.routes.ts';
 import { claimsRoutes } from './routes/claims.routes.ts';
 import { internalRoutes } from './routes/internal.routes.ts';
 import { policiesRoutes } from './routes/policies.routes.ts';
+import { startAgentDispatcher } from './workers/agent-dispatcher.ts';
 import { startVerificationDispatcher } from './workers/verification-dispatcher.ts';
 
 const config = loadConfig();
@@ -25,9 +26,16 @@ const db = createDatabase(config.DATABASE_URL);
 
 const readiness = new ReadinessRegistry().register(postgresReadinessCheck(config.DATABASE_URL));
 
-const stopDispatcher = startVerificationDispatcher(db, config, logger);
-process.on('SIGINT', stopDispatcher);
-process.on('SIGTERM', stopDispatcher);
+const stopVerificationDispatcher = startVerificationDispatcher(db, config, logger);
+const stopAgentDispatcher = startAgentDispatcher(db, config, logger);
+process.on('SIGINT', () => {
+  stopVerificationDispatcher();
+  stopAgentDispatcher();
+});
+process.on('SIGTERM', () => {
+  stopVerificationDispatcher();
+  stopAgentDispatcher();
+});
 
 startService({
   config,

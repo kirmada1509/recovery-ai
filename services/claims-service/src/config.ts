@@ -13,13 +13,14 @@ const claimsEnvSchema = baseServiceEnvSchema.extend({
   EVIDENCE_SERVICE_URL: z.string().url().default('http://localhost:3004'),
   IDENTITY_SERVICE_URL: z.string().url().default('http://localhost:3002'),
   VERIFICATION_SERVICE_URL: z.string().url().default('http://localhost:8001'),
+  AGENT_SERVICE_URL: z.string().url().default('http://localhost:8002'),
 
-  // Shared with verification-service for the internal-service-authenticated
-  // dispatch/callback pair (plan Section 2.5).
+  // Shared with verification-service and agent-service for the
+  // internal-service-authenticated dispatch/callback pairs (plan Section 2.5).
   INTERNAL_SERVICE_SECRET: z.string().min(20),
   INTERNAL_ALLOWED_CALLERS: z
     .string()
-    .default('verification-service')
+    .default('verification-service,agent-service')
     .transform((v) => v.split(',').map((s) => s.trim())),
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),

@@ -5,6 +5,7 @@ WORKDIR /app
 FROM base AS deps
 COPY package.json bun.lock ./
 COPY packages/config-ts/package.json packages/config-ts/
+COPY packages/internal-auth-ts/package.json packages/internal-auth-ts/
 COPY packages/observability-ts/package.json packages/observability-ts/
 COPY packages/service-runtime/package.json packages/service-runtime/
 COPY packages/ts-config/package.json packages/ts-config/
