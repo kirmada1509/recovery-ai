@@ -1,0 +1,37 @@
+# dependencies
+node_modules/
+.venv/
+__pycache__/
+*.egg-info/
+.uv-cache/
+
+# builds
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# test / coverage
+coverage/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+test-results/
+playwright-report/
+
+# local data
+.data/
+tmp/
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

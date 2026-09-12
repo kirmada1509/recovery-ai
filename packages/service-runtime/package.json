@@ -1,0 +1,24 @@
+{
+  "name": "@recoveryai/service-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@recoveryai/config-ts": "workspace:*",
+    "@recoveryai/observability-ts": "workspace:*",
+    "elysia": "^1.2.0"
+  },
+  "devDependencies": {
+    "@recoveryai/ts-config": "workspace:*",
+    "typescript": "^5.7.2"
+  }
+}

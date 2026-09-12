@@ -1,0 +1,58 @@
+[project]
+name = "recoveryai-workspace"
+version = "0.0.0"
+description = "RecoveryAI Python workspace root"
+requires-python = ">=3.12,<3.15"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "ruff>=0.8.0",
+    "mypy>=1.14.0",
+    "httpx>=0.28.0",
+]
+
+[tool.uv.workspace]
+members = ["python/common", "services/verification-service", "services/agent-service"]
+
+[tool.uv.sources]
+recoveryai-common = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Ruff formats Python blocks inside Markdown; the spec documents are authored prose
+# and must not be rewritten by a code formatter.
+extend-exclude = [".venv", "node_modules", "*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib"
+testpaths = ["python/common/tests", "services/verification-service/tests", "services/agent-service/tests"]
+filterwarnings = ["error::DeprecationWarning:recoveryai_common.*"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+exclude = ["\\.venv", "node_modules"]
+
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "structlog.*"]
+ignore_missing_imports = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true

@@ -1,0 +1,30 @@
+{
+  "name": "recoveryai",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/*"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun test",
+    "build": "bun run --filter '*' build",
+    "dev": "./scripts/dev.sh"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "@recoveryai/eslint-config": "workspace:*"
+  }
+}

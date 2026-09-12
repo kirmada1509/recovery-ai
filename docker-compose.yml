@@ -1,0 +1,109 @@
+# RecoveryAI local infrastructure (plan Section 15).
+# Application services run on the host via ./scripts/dev.sh; this file provides the
+# backing infrastructure they need. Everything here is local-only and uses
+# deliberately obvious development credentials.
+name: recoveryai
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: recoveryai-postgres
+    environment:
+      POSTGRES_USER: recoveryai
+      POSTGRES_PASSWORD: recoveryai
+      POSTGRES_DB: postgres
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U recoveryai -d postgres']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  minio:
+    # MinIO images are published on quay.io, not Docker Hub.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: recoveryai-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: recoveryai
+      MINIO_ROOT_PASSWORD: recoveryai-dev-secret
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: recoveryai-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ['/bin/sh', '/scripts/create-buckets.sh']
+    volumes:
+      - ./infra/minio:/scripts:ro
+    restart: 'no'
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.121.0
+    container_name: recoveryai-otel-collector
+    command: ['--config=/etc/otel/config.yaml']
+    volumes:
+      - ./infra/otel/collector-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - '4317:4317' # OTLP gRPC
+      - '4318:4318' # OTLP HTTP
+      - '13133:13133' # health check extension
+    depends_on:
+      jaeger:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - /otelcol-contrib
+        - --version
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    container_name: recoveryai-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+    ports:
+      - '16686:16686' # Jaeger UI
+      - '14317:4317' # OTLP gRPC (collector forwards here)
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:16686']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  dozzle:
+    image: amir20/dozzle:v8.12.12
+    container_name: recoveryai-dozzle
+    environment:
+      DOZZLE_NO_ANALYTICS: 'true'
+      DOZZLE_FILTER: 'name=recoveryai-*'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - '8888:8080'
+
+volumes:
+  postgres-data:
+  minio-data:

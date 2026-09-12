@@ -1,0 +1,4 @@
+{
+  "extends": "@recoveryai/ts-config/service.json",
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

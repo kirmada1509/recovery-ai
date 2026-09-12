@@ -1,0 +1,46 @@
+# OpenTelemetry Collector (plan Section 15). Every service exports OTLP here; the
+# collector fans out to the local trace backend.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - http://localhost:3000
+            - http://localhost:3010
+            - http://localhost:3011
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 512
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/jaeger, debug]
+  telemetry:
+    logs:
+      level: warn

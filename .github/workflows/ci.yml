@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # CI must never reach a real insurer, regulator or paid model (plan Sections 2.10, 11.7).
+  FILING_ADAPTER_INSURER: sandbox
+  FILING_ADAPTER_AUTHORITY: sandbox
+  LLM_PROVIDER: mock
+
+jobs:
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      - name: Format check
+        run: bunx prettier --check .
+      - name: Lint
+        run: bunx eslint .
+      - name: Typecheck
+        run: |
+          set -e
+          for dir in packages/config-ts packages/observability-ts packages/service-runtime \
+                     services/auth-service services/identity-service services/claims-service \
+                     services/evidence-service services/recovery-inbox-service \
+                     services/filing-gateway services/insurer-sandbox-service \
+                     services/regulator-sandbox-service \
+                     apps/platform-web apps/insurer-sandbox-web apps/regulator-sandbox-web; do
+            echo "::group::$dir"
+            (cd "$dir" && bunx tsc --noEmit)
+            echo "::endgroup::"
+          done
+      - name: Unit tests
+        run: bun test
+      - name: Build applications
+        run: |
+          set -e
+          for app in platform-web insurer-sandbox-web regulator-sandbox-web; do
+            echo "::group::$app"
+            (cd "apps/$app" && bun run build)
+            echo "::endgroup::"
+          done
+
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --frozen
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format check
+        run: uv run ruff format --check .
+      - name: Typecheck
+        run: |
+          uv run mypy python/common/src \
+            services/verification-service/verification_service \
+            services/agent-service/agent_service
+      - name: Unit tests
+        run: uv run pytest -q
+
+  docker:
+    name: Container builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Validate compose file
+        run: docker compose config -q
+      - name: Build service images
+        run: |
+          set -e
+          for svc in auth-service identity-service claims-service evidence-service \
+                     recovery-inbox-service filing-gateway insurer-sandbox-service \
+                     regulator-sandbox-service; do
+            echo "::group::$svc"
+            docker build -f "services/$svc/Dockerfile" -t "recoveryai/$svc:ci" .
+            echo "::endgroup::"
+          done
+
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: recoveryai
+          POSTGRES_PASSWORD: recoveryai
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U recoveryai"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - uses: astral-sh/setup-uv@v5
+      - run: bun install --frozen-lockfile
+      - run: uv sync --all-packages --frozen
+      - name: Create service databases
+        env:
+          PGPASSWORD: recoveryai
+        run: |
+          set -e
+          for db in recoveryai_auth recoveryai_identity recoveryai_claims recoveryai_evidence \
+                    recoveryai_inbox recoveryai_filing_gateway recoveryai_insurer_sandbox \
+                    recoveryai_regulator_sandbox recoveryai_verification recoveryai_agent; do
+            psql -h localhost -U recoveryai -d postgres -c "CREATE DATABASE $db"
+          done
+      - name: Readiness against a real database
+        run: bun scripts/ci-readiness-check.ts

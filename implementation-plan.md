@@ -253,6 +253,8 @@ Real providers are optional adapters, not blockers for completion.
 ├── packages/
 │   ├── ts-config/
 │   ├── eslint-config/
+│   ├── config-ts/                       # Startup env validation (Section 4.6)
+│   ├── service-runtime/                 # Elysia app factory, traced server, health
 │   ├── ui/                              # Shared shadcn primitives/design tokens
 │   ├── observability-ts/                # Pino + OTel helpers
 │   ├── auth-client/                     # Browser/server auth client helpers
