@@ -19,3 +19,12 @@ export function requireUser(user: AccessTokenClaims | null): AccessTokenClaims {
   if (!user) throw new AppError('UNAUTHENTICATED', 'Authentication required', 401);
   return user;
 }
+
+export function requireRole(
+  user: AccessTokenClaims | null,
+  role: 'victim' | 'admin',
+): AccessTokenClaims {
+  const authed = requireUser(user);
+  if (authed.role !== role) throw new AppError('FORBIDDEN', 'Insufficient role', 403);
+  return authed;
+}

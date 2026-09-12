@@ -22,6 +22,10 @@ export async function proxyToBackend(
   if (cookie) forwardedHeaders.set('cookie', cookie);
   const contentType = request.headers.get('content-type');
   if (contentType) forwardedHeaders.set('content-type', contentType);
+  // Mutating endpoints derive idempotency from this header (plan Section 4) —
+  // dropping it here would make every proxied submit look non-idempotent.
+  const idempotencyKey = request.headers.get('idempotency-key');
+  if (idempotencyKey) forwardedHeaders.set('idempotency-key', idempotencyKey);
   forwardedHeaders.set('x-request-id', crypto.randomUUID());
 
   // `arrayBuffer`, not `text` — a multipart file upload is binary and would

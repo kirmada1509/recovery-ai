@@ -8,7 +8,7 @@ Section 18. Updated as each phase gate passes.
 | **0** | Repository foundation and architecture guardrails | ✅ **Complete** |
 | **1** | Authentication and identity/KYC | ✅ **Complete** |
 | **2** | Evidence and policy upload | ✅ **Complete** |
-| 3 | Claims lifecycle | ⬜ Not started |
+| **3** | Claims lifecycle | ✅ **Complete** |
 | 4 | Verification service | ⬜ Not started |
 | 5 | Policy RAG and AI agent core | ⬜ Not started |
 | 6 | Filing Gateway and sandbox backends | ⬜ Not started |
@@ -198,3 +198,97 @@ available (e.g. for a future admin tool or SDK integration).
    convenience checksum (no independent verification) on the presigned path, which is
    unused by any current caller. Independent server-side rehashing of the presigned
    path is a candidate for the security-hardening phase.
+
+## Phase 3 — complete
+
+| Task | Delivered |
+|---|---|
+| **P3-T1** Claims DB + state-transition module | `claims`, `claim_items`, `claim_evidence_links`, `claim_events`, `manual_review_tasks`, `verification_dispatch_outbox`, `idempotency_keys`; `src/domain/claim-state-machine.ts` encodes the *entire* Section 5.1 lifecycle (21 states) as a transition table, even though this phase only drives `DRAFT → SUBMITTED → VERIFYING` |
+| **P3-T2** Draft claim APIs | Create/update a claim, add/edit/delete items (claim's running `claimedAmountPaise` total recomputed on every item change), link evidence documents (ownership re-validated against evidence-service, same pattern as Phase 2's policy creation) |
+| **P3-T3** Submit endpoint | Validates KYC-verified, owned policy, ≥1 item, incident date+location, ≥1 linked document; `DRAFT → SUBMITTED → VERIFYING` in one transaction with an outbox row, all under one `Idempotency-Key` |
+| **P3-T4** Background outbox dispatch | `src/workers/verification-dispatcher.ts` polls `verification_dispatch_outbox` with `FOR UPDATE SKIP LOCKED`, calls verification-service with internal-service auth, exponential backoff on failure (verified live against a 404, since Phase 4 doesn't exist yet — see below) |
+| **P3-T5** Claim wizard + dashboard | `/claims/new` (incident → items → evidence → review, autosaving each step against the claim as it's created), `/claims` list, `/claims/:id` timeline |
+| **P3-T6** Admin claim list/detail shell | `/admin/claims`, `/admin/claims/:id`, `/admin/manual-reviews` + a real (not shell) resolve endpoint — approving/rejecting records an immutable `claim_events` row; the "resume verification" behavior that follows an approval is Phase 4's P4-T7, since it depends on a `pass`/`review` decision Phase 4 produces |
+
+### Acceptance evidence
+
+- `./scripts/test-all.sh` passes: 157 Bun tests (up from 103), including all 21 documented
+  state transitions plus 9 representative illegal ones, the full draft→submit lifecycle,
+  the literal phase gate (duplicate submit with the same `Idempotency-Key` produces zero
+  new events and exactly one outbox row), KYC-gated and evidence-gated submit rejection,
+  the verification-result callback (pass/review, and idempotent replay of the same run),
+  IDOR on claims/items/submit, and admin role + manual-review resolution.
+- Migrations apply cleanly from an empty `recoveryai_claims` database.
+- Three Playwright tests pass together: Phase 1's onboarding, Phase 2's upload, and a new
+  `claim-submission.spec.ts` that drives the actual wizard UI (policy pick → incident →
+  item → real file upload → review → submit) and asserts the claim detail page shows
+  `VERIFYING` with the three expected timeline events — proving the browser flow, not
+  just the API, since the wizard's own step-to-step state and autosave calls are exactly
+  what a service-level test calling `app.handle()` can't exercise.
+- Manually verified end to end against the live stack, including watching the outbox
+  dispatcher's real behavior: it retried three times with increasing backoff against
+  verification-service's (currently nonexistent) `/v1/verifications` route, logging
+  `"verification-service responded 404"` each time — the dispatcher's failure path
+  working as designed, not a bug, since Phase 4 hasn't been built yet. Separately called
+  the internal verification-result callback directly (as Phase 4 will) to confirm
+  `review → MANUAL_REVIEW` and the admin resolve flow both work correctly today.
+
+### A bug this phase's manual walkthrough caught that no test did
+
+`apps/platform-web`'s backend proxy (`src/lib/backend-proxy.ts`) only forwarded
+`authorization`, `cookie`, and `content-type` headers — every other header, including
+`Idempotency-Key`, was silently dropped. The claim wizard's submit button failed with
+"An Idempotency-Key header is required" the first time it was clicked through the actual
+browser, even though the identical request against claims-service directly (and every
+integration test, which calls the route handler directly and never goes through the
+proxy) worked. Fixed by forwarding `idempotency-key` explicitly. This is the same shape
+of bug as Phase 1's refresh-cookie path issue: the proxy is a real seam that only a
+through-the-browser test exercises.
+
+### A correctness bug found while writing this phase's idempotency test
+
+`drizzle-orm`'s built-in `jsonb()` column type calls `JSON.stringify()` on the value
+before handing it to the driver. Bun's native Postgres client (`drizzle-orm/bun-sql`)
+expects the *raw* JS value for a `jsonb` bind parameter — handing it an
+already-stringified string causes Bun to bind it as plain text, which Postgres then
+casts into a jsonb **string scalar** containing the JSON text, not a jsonb **object**.
+`payload->>'key'` queries against such a column silently return `null` for every row,
+with no error anywhere. This was invisible until the verification-result idempotency
+test needed to query into `claim_events.payload` — every `jsonb` column written through
+Drizzle before this fix (`claim_events.payload`, `verification_dispatch_outbox.payload`,
+`idempotency_keys.response_body`, `evidence-service`'s `document_metadata.metadata`) was
+affected. Fixed by defining a local `jsonb()` `customType` in both services' schema
+files that passes the value through unchanged — confirmed via `jsonb_typeof()` before
+and after, and reproduced independently against a bare `Bun.SQL` client outside Drizzle
+entirely to confirm it wasn't a Drizzle bug but a driver-pairing one. No migration was
+needed — the column's SQL type (`jsonb`) never changed, only how the JS value reaches it.
+
+### Deviations from the plan, and why
+
+1. **A `claim_evidence_links` join table**, not explicitly named in the plan's §6.3
+   excerpt but required to normalize "≥1 linked evidence document" as a real relation
+   rather than a JSON array on the claim row — matches the shape of `POST
+   /v1/claims/:id/evidence-links` the plan does specify.
+2. **An `idempotency_keys` table**, similarly not named in §6.3 but required to make the
+   phase gate's literal wording — "duplicate submit does no new work" — actually
+   enforceable: the response to a given key is stored once and replayed verbatim on
+   retry, rather than re-deriving it from claim state (which would require the claim to
+   still be in a re-derivable state, not true once verification has moved it further).
+3. **A `fail` verification decision routes to `MANUAL_REVIEW`, not a terminal state.**
+   The plan allows either "manual review or terminal branch based on configured reason";
+   defaulting every failure to manual review means a human sees it before it becomes
+   final, which is the safer default for an MVP with no configured reason codes yet.
+4. **P4-T7's "queue Agent Service" step is not implemented as a stub call.** Agent
+   Service doesn't exist until Phase 5. The manual-review approval path lands the
+   `MANUAL_REVIEW → VERIFIED` transition and immutable event now; the next hook is
+   deliberately absent rather than faked, per CLAUDE.md's prohibition on fake success
+   responses.
+
+### Not yet implemented (by design)
+
+Everything past `VERIFYING` in the state machine (`READY_FOR_INSURER` onward) has no
+driving logic yet — only the legal-transition table exists for those states, per Phase
+3's explicit scope. Verification itself (Phase 4) doesn't exist, so a submitted claim's
+outbox row will retry with backoff against a 404 until that phase lands; this is
+expected, not a bug, and is exercised directly in this phase's tests via the internal
+callback contract instead.

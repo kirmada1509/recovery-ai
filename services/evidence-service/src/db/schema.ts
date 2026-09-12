@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
+  customType,
   index,
-  jsonb,
   bigint,
   doublePrecision,
   integer,
@@ -11,6 +11,18 @@ import {
   timestamp,
   uuid,
 } from 'drizzle-orm/pg-core';
+
+/**
+ * Bun's native Postgres client expects a raw JS value for a `jsonb` bind
+ * parameter, not a pre-serialized string — drizzle's built-in `jsonb()`
+ * always calls `JSON.stringify` before handing the value to the driver,
+ * which then stores it as a jsonb *string* scalar instead of an object.
+ * Passing the value through unchanged is correct for this driver. See the
+ * identical note in claims-service/src/db/schema.ts.
+ */
+function jsonb<T = unknown>(name: string) {
+  return customType<{ data: T; driverData: T }>({ dataType: () => 'jsonb' })(name);
+}
 
 export const documentTypeEnum = pgEnum('document_type', [
   'policy',
