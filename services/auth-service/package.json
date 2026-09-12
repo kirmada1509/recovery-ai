@@ -9,16 +9,22 @@
     "start": "bun src/index.ts",
     "build": "bun build src/index.ts --target=bun --outdir=dist",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "bun src/db/migrate.ts"
   },
   "dependencies": {
     "@recoveryai/config-ts": "workspace:*",
     "@recoveryai/observability-ts": "workspace:*",
     "@recoveryai/service-runtime": "workspace:*",
-    "elysia": "^1.4.0"
+    "drizzle-orm": "^0.45.2",
+    "elysia": "^1.4.0",
+    "jose": "^6.2.12",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@recoveryai/ts-config": "workspace:*",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^5.7.2"
   }
 }

@@ -19,6 +19,21 @@ jobs:
   typescript:
     name: TypeScript
     runs-on: ubuntu-latest
+    services:
+      # auth-service and identity-service's tests exercise real Drizzle
+      # migrations and queries, not mocks (plan Section 16.1 / CLAUDE.md
+      # invariant 9 — "everything works with mocks" is about external
+      # providers, not our own Postgres).
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: recoveryai
+          POSTGRES_PASSWORD: recoveryai
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U recoveryai"
+          --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -33,6 +48,7 @@ jobs:
         run: |
           set -e
           for dir in packages/config-ts packages/observability-ts packages/service-runtime \
+                     packages/internal-auth-ts \
                      services/auth-service services/identity-service services/claims-service \
                      services/evidence-service services/recovery-inbox-service \
                      services/filing-gateway services/insurer-sandbox-service \
@@ -42,8 +58,18 @@ jobs:
             (cd "$dir" && bunx tsc --noEmit)
             echo "::endgroup::"
           done
+      - name: Create service databases
+        env:
+          PGPASSWORD: recoveryai
+        run: |
+          set -e
+          for db in recoveryai_auth recoveryai_identity; do
+            psql -h localhost -U recoveryai -d postgres -c "CREATE DATABASE $db"
+          done
+      - name: Apply migrations
+        run: ./scripts/migrate.sh
       - name: Unit tests
-        run: bun test
+        run: bun test --path-ignore-patterns '**/e2e/**'
       - name: Build applications
         run: |
           set -e

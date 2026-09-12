@@ -20,6 +20,8 @@ docker compose up -d --wait postgres minio otel-collector jaeger dozzle
 docker compose up -d minio-init >/dev/null
 ok "infrastructure healthy"
 
+"${REPO_ROOT}/scripts/migrate.sh"
+
 cat <<SUMMARY
 
   Postgres        localhost:5432

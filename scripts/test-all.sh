@@ -18,7 +18,7 @@ step "ruff (format check)" uv run ruff format --check .
 
 log "TypeScript typecheck"
 TS_OK=true
-for dir in packages/config-ts packages/observability-ts packages/service-runtime \
+for dir in packages/config-ts packages/observability-ts packages/service-runtime packages/internal-auth-ts \
            services/auth-service services/identity-service services/claims-service \
            services/evidence-service services/recovery-inbox-service services/filing-gateway \
            services/insurer-sandbox-service services/regulator-sandbox-service \
@@ -31,7 +31,7 @@ done
 if [[ "${TS_OK}" == true ]]; then ok "TypeScript typecheck"; else FAILED+=("TypeScript typecheck"); fi
 
 step "mypy" uv run mypy python/common/src services/verification-service/verification_service services/agent-service/agent_service
-step "bun test" bun test
+step "bun test" bun test --path-ignore-patterns '**/e2e/**'
 step "pytest" uv run pytest -q
 
 if [[ ${#FAILED[@]} -gt 0 ]]; then
